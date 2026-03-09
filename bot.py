@@ -1,403 +1,357 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, LabeledPrice, PreCheckoutQuery, CallbackQuery
-from aiogram.enums import ParseMode
-from supabase import create_client
+from supabase import create_client, Client
 
-# Настройки
+# ===== НАСТРОЙКИ =====
 BOT_TOKEN = "7948801307:AAEVkGlfE4kd0dmgifPZPdQb4FK3vvXrdUc"
+ADMIN_ID = 8339935446
 SUPABASE_URL = "https://soxzsdwtutwdzygezsnk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNveHpzZHd0dXR3ZHp5Z2V6c25rIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjg2NzMwNywiZXhwIjoyMDg4NDQzMzA3fQ.VvVJW7abALCE0vPXU1gebKEf1JJhk8-Owk0b-VYK6jQ"
-WEBAPP_URL = "https://giftpepe.github.io"
-ADMIN_ID = 8339935446
 
 # Курс: 100 Stars = 1.1 TON
 STARS_TO_TON_RATE = 1.1 / 100
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logger = logging.getLogger(__name__)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# /start - только описание и кнопка играть
+# ===== START =====
 @dp.message(CommandStart())
-async def start_handler(message: types.Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    first_name = message.from_user.first_name or ""
+async def cmd_start(message: types.Message):
+    user = message.from_user
+    args = message.text.split()[1] if len(message.text.split()) > 1 else None
     
-    # Проверяем реферала
-    args = message.text.split()
-    referrer_id = None
-    if len(args) > 1 and args[1].startswith("ref_"):
+    # Создаём/обновляем пользователя
+    try:
+        supabase.table('users').upsert({
+            'id': user.id,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name
+        }, on_conflict='id').execute()
+    except Exception as e:
+        logger.error(f"User upsert error: {e}")
+    
+    # Обработка реферальной ссылки
+    if args and args.startswith('ref_'):
         try:
-            referrer_id = int(args[1].replace("ref_", ""))
-            if referrer_id == user_id:
-                referrer_id = None
+            referrer_id = int(args.replace('ref_', ''))
+            if referrer_id != user.id:
+                # Проверяем что юзер новый
+                result = supabase.table('users').select('referrer_id').eq('id', user.id).single().execute()
+                if result.data and not result.data.get('referrer_id'):
+                    # Записываем реферера
+                    supabase.table('users').update({'referrer_id': referrer_id}).eq('id', user.id).execute()
+                    # Увеличиваем счётчик рефералов
+                    supabase.rpc('increment_referral_count', {'user_id': referrer_id}).execute()
+                    # Уведомляем реферера
+                    try:
+                        await bot.send_message(referrer_id, f"🎉 По вашей ссылке присоединился @{user.username or user.first_name}!")
+                    except:
+                        pass
+        except Exception as e:
+            logger.error(f"Referral error: {e}")
+    
+    # Обработка оплаты через deep link
+    if args and args.startswith('pay_'):
+        try:
+            stars = int(args.replace('pay_', ''))
+            if stars >= 1:
+                await send_invoice(message.chat.id, user.id, stars)
+                return
         except:
             pass
     
-    # Проверяем существует ли пользователь
-    existing = supabase.table("users").select("id, referrer_id").eq("id", user_id).execute()
-    
-    if not existing.data:
-        # Новый пользователь
-        supabase.table("users").insert({
-            "id": user_id,
-            "username": username,
-            "first_name": first_name,
-            "balance": 0,
-            "referrer_id": referrer_id,
-            "referral_count": 0,
-            "referral_earnings": 0
-        }).execute()
-        
-        # Уведомляем реферера
-        if referrer_id:
-            supabase.table("users").update({
-                "referral_count": supabase.table("users").select("referral_count").eq("id", referrer_id).execute().data[0]["referral_count"] + 1
-            }).eq("id", referrer_id).execute()
-            
-            try:
-                await bot.send_message(
-                    referrer_id,
-                    f"🎉 По вашей ссылке присоединился новый пользователь!\n"
-                    f"👤 @{username or first_name}\n"
-                    f"💰 Вы будете получать 10% от его пополнений!"
-                )
-            except:
-                pass
-    else:
-        # Обновляем данные существующего
-        supabase.table("users").update({
-            "username": username,
-            "first_name": first_name
-        }).eq("id", user_id).execute()
-    
-    # Отправляем приветствие
+    # Приветственное сообщение
+    text = """🎁 <b>Добро пожаловать в GiftPepe!</b>
+
+🎰 Открывай кейсы и выигрывай NFT-подарки
+⬆️ Апгрейди подарки для увеличения стоимости
+💎 Выводи на свой Telegram-аккаунт
+
+Нажми кнопку ниже чтобы начать играть! 👇"""
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))]
+        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
     ])
     
-    await message.answer(
-        "🎁 <b>Gift Pepe</b> — открывай кейсы, выбивай редкие NFT подарки!\n\n"
-        "🎰 Крути кейсы и получай ценные призы\n"
-        "⬆️ Апгрейди подарки для увеличения стоимости\n"
-        "💎 Выводи NFT или продавай за TON\n\n"
-        "Нажми <b>Играть</b> чтобы начать!",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.HTML
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+# ===== ОТПРАВКА ИНВОЙСА =====
+async def send_invoice(chat_id: int, user_id: int, stars: int):
+    ton_amount = stars * STARS_TO_TON_RATE
+    
+    prices = [LabeledPrice(label=f"Пополнение {stars} ⭐", amount=stars)]
+    
+    await bot.send_invoice(
+        chat_id=chat_id,
+        title=f"Пополнение баланса",
+        description=f"{stars} Stars = {ton_amount:.2f} TON на баланс в GiftPepe",
+        payload=f"deposit_{user_id}_{stars}",
+        currency="XTR",
+        prices=prices
     )
 
 
-# Обработка pre_checkout_query
+# ===== PRE-CHECKOUT =====
 @dp.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
 
-# Обработка успешной оплаты
+# ===== УСПЕШНАЯ ОПЛАТА =====
 @dp.message(F.successful_payment)
 async def process_successful_payment(message: types.Message):
     payment = message.successful_payment
-    user_id = message.from_user.id
-    stars = payment.total_amount
-    ton_amount = round(stars * STARS_TO_TON_RATE, 2)
+    payload = payment.invoice_payload
     
-    logging.info(f"Payment: user={user_id}, stars={stars}, ton={ton_amount}")
-    
-    # Получаем текущий баланс и реферера
-    user_data = supabase.table("users").select("balance, referrer_id").eq("id", user_id).execute()
-    
-    if user_data.data:
-        current_balance = float(user_data.data[0].get("balance", 0))
-        referrer_id = user_data.data[0].get("referrer_id")
-        
-        # Обновляем баланс
-        new_balance = current_balance + ton_amount
-        supabase.table("users").update({"balance": new_balance}).eq("id", user_id).execute()
-        
-        # Записываем платёж
-        supabase.table("star_payments").insert({
-            "user_id": user_id,
-            "stars": stars,
-            "ton_amount": ton_amount,
-            "payment_id": payment.telegram_payment_charge_id
-        }).execute()
-        
-        # Реферальный бонус 10%
-        if referrer_id:
-            bonus = round(ton_amount * 0.1, 2)
-            ref_data = supabase.table("users").select("balance, referral_earnings").eq("id", referrer_id).execute()
-            if ref_data.data:
-                ref_balance = float(ref_data.data[0].get("balance", 0))
-                ref_earnings = float(ref_data.data[0].get("referral_earnings", 0))
-                supabase.table("users").update({
-                    "balance": ref_balance + bonus,
-                    "referral_earnings": ref_earnings + bonus
-                }).eq("id", referrer_id).execute()
-                
-                try:
-                    username = message.from_user.username or message.from_user.first_name
-                    await bot.send_message(
-                        referrer_id,
-                        f"💰 <b>Реферальный бонус!</b>\n\n"
-                        f"👤 @{username} пополнил баланс\n"
-                        f"🎁 Ваш бонус: <b>+{bonus} TON</b>",
-                        parse_mode=ParseMode.HTML
-                    )
-                except:
-                    pass
-        
-        await message.answer(
-            f"✅ <b>Оплата прошла успешно!</b>\n\n"
-            f"⭐ Оплачено: {stars} Stars\n"
-            f"💎 Зачислено: <b>{ton_amount} TON</b>\n\n"
-            f"Возвращайся в игру!",
-            parse_mode=ParseMode.HTML
-        )
-    else:
-        await message.answer("❌ Ошибка: пользователь не найден")
-
-
-# Callback для подтверждения/отклонения вывода
-@dp.callback_query(F.data.startswith("withdraw_"))
-async def process_withdraw_callback(callback: CallbackQuery):
-    data = callback.data.split("_")
-    action = data[1]  # approve или reject
-    withdraw_id = int(data[2])
-    
-    # Получаем данные о выводе
-    withdraw_data = supabase.table("withdrawals").select("*").eq("id", withdraw_id).execute()
-    
-    if not withdraw_data.data:
-        await callback.answer("Заявка не найдена", show_alert=True)
-        return
-    
-    withdraw = withdraw_data.data[0]
-    user_id = withdraw["user_id"]
-    gift_name = withdraw["gift_name"]
-    gift_price = withdraw["gift_price"]
-    gift_image = withdraw.get("gift_image", "")
-    
-    if action == "approve":
-        # Подтверждаем вывод
-        supabase.table("withdrawals").update({"status": "approved"}).eq("id", withdraw_id).execute()
-        
-        # Получаем username пользователя
-        user_data = supabase.table("users").select("username").eq("id", user_id).execute()
-        target_username = user_data.data[0].get("username", "") if user_data.data else ""
-        
-        # Уведомляем пользователя
-        try:
-            await bot.send_message(
-                user_id,
-                f"✅ <b>Подарок выведен!</b>\n\n"
-                f"🎁 {gift_name}\n"
-                f"💰 Стоимость: <b>{gift_price} TON</b>\n\n"
-                f"Подарок отправлен на ваш аккаунт @{target_username}",
-                parse_mode=ParseMode.HTML
+    try:
+        # Парсим payload: deposit_USER_ID_STARS
+        parts = payload.split('_')
+        if len(parts) >= 3 and parts[0] == 'deposit':
+            user_id = int(parts[1])
+            stars = int(parts[2])
+            ton_amount = stars * STARS_TO_TON_RATE
+            
+            # Зачисляем на баланс
+            result = supabase.table('users').select('balance, referrer_id').eq('id', user_id).single().execute()
+            current_balance = result.data.get('balance', 0) if result.data else 0
+            referrer_id = result.data.get('referrer_id') if result.data else None
+            
+            new_balance = current_balance + ton_amount
+            supabase.table('users').update({'balance': new_balance}).eq('id', user_id).execute()
+            
+            # Логируем платёж
+            supabase.table('star_payments').insert({
+                'user_id': user_id,
+                'stars': stars,
+                'ton_amount': ton_amount,
+                'payment_id': payment.telegram_payment_charge_id
+            }).execute()
+            
+            # Реферальный бонус 10%
+            if referrer_id:
+                bonus = ton_amount * 0.1
+                ref_result = supabase.table('users').select('balance, referral_earnings').eq('id', referrer_id).single().execute()
+                if ref_result.data:
+                    ref_balance = ref_result.data.get('balance', 0)
+                    ref_earnings = ref_result.data.get('referral_earnings', 0)
+                    supabase.table('users').update({
+                        'balance': ref_balance + bonus,
+                        'referral_earnings': ref_earnings + bonus
+                    }).eq('id', referrer_id).execute()
+                    
+                    # Уведомляем реферера
+                    try:
+                        await bot.send_message(
+                            referrer_id,
+                            f"💰 Ваш реферал пополнил баланс!\n+{bonus:.2f} TON на ваш счёт (10% бонус)"
+                        )
+                    except:
+                        pass
+            
+            await message.answer(
+                f"✅ Успешно оплачено!\n\n"
+                f"💰 +{ton_amount:.2f} TON зачислено на баланс\n"
+                f"⭐ Оплачено: {stars} Stars\n\n"
+                f"Вернитесь в приложение и обновите страницу.",
+                parse_mode="HTML"
             )
-        except Exception as e:
-            logging.error(f"Failed to notify user {user_id}: {e}")
-        
-        await callback.message.edit_text(
-            callback.message.text + "\n\n✅ <b>ПОДТВЕРЖДЕНО</b>",
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer("Вывод подтверждён!")
-        
-    elif action == "reject":
-        # Отклоняем вывод
-        supabase.table("withdrawals").update({"status": "rejected"}).eq("id", withdraw_id).execute()
-        
-        # Возвращаем подарок в инвентарь
-        supabase.table("inventory").insert({
-            "user_id": user_id,
-            "gift_name": gift_name,
-            "gift_image": gift_image,
-            "gift_price": gift_price
-        }).execute()
-        
-        # Уведомляем пользователя
-        try:
-            await bot.send_message(
-                user_id,
-                f"❌ <b>Не удалось вывести подарок</b>\n\n"
-                f"🎁 {gift_name}\n"
-                f"💰 Стоимость: <b>{gift_price} TON</b>\n\n"
-                f"Подарок возвращён в ваш инвентарь.",
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            logging.error(f"Failed to notify user {user_id}: {e}")
-        
-        await callback.message.edit_text(
-            callback.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
-            parse_mode=ParseMode.HTML
-        )
-        await callback.answer("Вывод отклонён, подарок возвращён!")
+            logger.info(f"Payment success: user={user_id}, stars={stars}, ton={ton_amount}")
+            
+    except Exception as e:
+        logger.error(f"Payment processing error: {e}")
+        await message.answer("❌ Ошибка обработки платежа. Обратитесь в поддержку.")
 
 
-# Проверка новых запросов на пополнение
+# ===== ПРОВЕРКА PENDING PAYMENTS =====
 async def check_pending_payments():
+    """Проверяет таблицу pending_payments и отправляет инвойсы"""
     while True:
         try:
-            pending = supabase.table("pending_payments").select("*").eq("status", "pending").execute()
+            result = supabase.table('pending_payments').select('*').eq('status', 'pending').execute()
             
-            for payment in pending.data:
-                user_id = payment["user_id"]
-                stars = payment["stars"]
-                payment_id = payment["id"]
-                
-                # Отправляем инвойс
-                try:
-                    await bot.send_invoice(
-                        chat_id=user_id,
-                        title="Пополнение баланса",
-                        description=f"Пополнение на {round(stars * STARS_TO_TON_RATE, 2)} TON",
-                        payload=f"topup_{user_id}_{stars}",
-                        currency="XTR",
-                        prices=[LabeledPrice(label="Stars", amount=stars)]
-                    )
-                    # Помечаем как отправленный
-                    supabase.table("pending_payments").update({"status": "sent"}).eq("id", payment_id).execute()
-                except Exception as e:
-                    logging.error(f"Failed to send invoice to {user_id}: {e}")
-                    supabase.table("pending_payments").update({"status": "error"}).eq("id", payment_id).execute()
-        
+            if result.data:
+                for payment in result.data:
+                    user_id = payment['user_id']
+                    stars = payment['stars']
+                    payment_id = payment['id']
+                    
+                    try:
+                        # Отправляем инвойс
+                        await send_invoice(user_id, user_id, stars)
+                        
+                        # Помечаем как отправленный
+                        supabase.table('pending_payments').update({'status': 'sent'}).eq('id', payment_id).execute()
+                        logger.info(f"Invoice sent to user {user_id} for {stars} stars")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to send invoice to {user_id}: {e}")
+                        # Помечаем как ошибку
+                        supabase.table('pending_payments').update({'status': 'error'}).eq('id', payment_id).execute()
+                        
         except Exception as e:
-            logging.error(f"Error checking pending payments: {e}")
-        
-        await asyncio.sleep(3)
-
-
-# Проверка новых заявок на вывод
-async def check_withdrawals():
-    while True:
-        try:
-            pending = supabase.table("withdrawals").select("*").eq("status", "pending").execute()
-            
-            for withdraw in pending.data:
-                withdraw_id = withdraw["id"]
-                user_id = withdraw["user_id"]
-                username = withdraw.get("username", "Unknown")
-                gift_name = withdraw["gift_name"]
-                gift_price = withdraw["gift_price"]
-                
-                # Кнопки подтверждения/отклонения
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"withdraw_approve_{withdraw_id}"),
-                        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"withdraw_reject_{withdraw_id}")
-                    ]
-                ])
-                
-                try:
-                    await bot.send_message(
-                        ADMIN_ID,
-                        f"📤 <b>Заявка на вывод #{withdraw_id}</b>\n\n"
-                        f"👤 @{username}\n"
-                        f"🆔 ID: <code>{user_id}</code>\n"
-                        f"🎁 Подарок: <b>{gift_name}</b>\n"
-                        f"💰 Стоимость: <b>{gift_price} TON</b>",
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                    # Помечаем как notified (ждём решения админа)
-                    supabase.table("withdrawals").update({"status": "notified"}).eq("id", withdraw_id).execute()
-                except Exception as e:
-                    logging.error(f"Failed to notify admin about withdrawal: {e}")
-        
-        except Exception as e:
-            logging.error(f"Error checking withdrawals: {e}")
+            logger.error(f"Check pending payments error: {e}")
         
         await asyncio.sleep(5)
 
 
-# Админ команды
-@dp.message(Command("admin"))
-async def admin_stats(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    users = supabase.table("users").select("id, balance").execute()
-    total_users = len(users.data)
-    total_balance = sum(float(u.get("balance", 0)) for u in users.data)
-    
-    pending = supabase.table("withdrawals").select("id").eq("status", "notified").execute()
-    pending_count = len(pending.data)
-    
-    await message.answer(
-        f"📊 <b>Статистика</b>\n\n"
-        f"👥 Пользователей: {total_users}\n"
-        f"💰 Общий баланс: {total_balance:.2f} TON\n"
-        f"📤 Ожидают вывода: {pending_count}",
-        parse_mode=ParseMode.HTML
-    )
+# ===== ПРОВЕРКА ВЫВОДОВ =====
+async def check_withdrawals():
+    """Проверяет таблицу withdrawals и уведомляет админа"""
+    while True:
+        try:
+            result = supabase.table('withdrawals').select('*').eq('status', 'pending').execute()
+            
+            if result.data:
+                for withdrawal in result.data:
+                    withdraw_id = withdrawal['id']
+                    user_id = withdrawal['user_id']
+                    username = withdrawal.get('username', 'unknown')
+                    gift_name = withdrawal['gift_name']
+                    gift_price = withdrawal['gift_price']
+                    
+                    # Отправляем уведомление админу с кнопками
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{withdraw_id}_{user_id}"),
+                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{withdraw_id}_{user_id}")
+                        ]
+                    ])
+                    
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"📤 <b>Заявка на вывод #{withdraw_id}</b>\n\n"
+                        f"👤 @{username} (ID: {user_id})\n"
+                        f"🎁 {gift_name}\n"
+                        f"💰 {gift_price} TON",
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                    
+                    # Помечаем как notified
+                    supabase.table('withdrawals').update({'status': 'notified'}).eq('id', withdraw_id).execute()
+                    logger.info(f"Withdrawal notification sent: #{withdraw_id}")
+                    
+        except Exception as e:
+            logger.error(f"Check withdrawals error: {e}")
+        
+        await asyncio.sleep(10)
 
 
-@dp.message(Command("give"))
-async def give_balance(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("Использование: /give USER_ID AMOUNT")
-        return
+# ===== ОБРАБОТКА КНОПОК ПОДТВЕРЖДЕНИЯ/ОТКЛОНЕНИЯ =====
+@dp.callback_query(F.data.startswith('confirm_'))
+async def confirm_withdrawal(callback: CallbackQuery):
+    parts = callback.data.split('_')
+    withdraw_id = int(parts[1])
+    user_id = int(parts[2])
     
     try:
-        target_id = int(args[1])
-        amount = float(args[2])
+        # Получаем данные о выводе
+        result = supabase.table('withdrawals').select('*').eq('id', withdraw_id).single().execute()
+        if not result.data:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
         
-        user_data = supabase.table("users").select("balance").eq("id", target_id).execute()
-        if user_data.data:
-            current = float(user_data.data[0].get("balance", 0))
-            supabase.table("users").update({"balance": current + amount}).eq("id", target_id).execute()
-            await message.answer(f"✅ Выдано {amount} TON пользователю {target_id}")
-        else:
-            await message.answer("❌ Пользователь не найден")
+        withdrawal = result.data
+        
+        # Получаем username пользователя
+        user_result = supabase.table('users').select('username').eq('id', user_id).single().execute()
+        username = user_result.data.get('username', 'unknown') if user_result.data else 'unknown'
+        
+        # Обновляем статус
+        supabase.table('withdrawals').update({'status': 'completed'}).eq('id', withdraw_id).execute()
+        
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Подарок отправлен!</b>\n\n"
+                f"🎁 {withdrawal['gift_name']}\n"
+                f"💰 {withdrawal['gift_price']} TON\n\n"
+                f"📬 Отправлен на ваш аккаунт @{username}",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        
+        await callback.message.edit_text(
+            f"✅ Подтверждено!\n\n"
+            f"@{username} получил {withdrawal['gift_name']} ({withdrawal['gift_price']} TON)"
+        )
+        await callback.answer("Подтверждено!")
+        
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        logger.error(f"Confirm withdrawal error: {e}")
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
 
 
-@dp.message(Command("take"))
-async def take_balance(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("Использование: /take USER_ID AMOUNT")
-        return
+@dp.callback_query(F.data.startswith('reject_'))
+async def reject_withdrawal(callback: CallbackQuery):
+    parts = callback.data.split('_')
+    withdraw_id = int(parts[1])
+    user_id = int(parts[2])
     
     try:
-        target_id = int(args[1])
-        amount = float(args[2])
+        # Получаем данные о выводе
+        result = supabase.table('withdrawals').select('*').eq('id', withdraw_id).single().execute()
+        if not result.data:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
         
-        user_data = supabase.table("users").select("balance").eq("id", target_id).execute()
-        if user_data.data:
-            current = float(user_data.data[0].get("balance", 0))
-            new_balance = max(0, current - amount)
-            supabase.table("users").update({"balance": new_balance}).eq("id", target_id).execute()
-            await message.answer(f"✅ Снято {amount} TON у пользователя {target_id}")
-        else:
-            await message.answer("❌ Пользователь не найден")
+        withdrawal = result.data
+        
+        # Возвращаем подарок в инвентарь
+        supabase.table('inventory').insert({
+            'user_id': user_id,
+            'gift_name': withdrawal['gift_name'],
+            'gift_image': withdrawal['gift_image'],
+            'gift_price': withdrawal['gift_price']
+        }).execute()
+        
+        # Обновляем статус
+        supabase.table('withdrawals').update({'status': 'rejected'}).eq('id', withdraw_id).execute()
+        
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                user_id,
+                f"❌ <b>Подарок не удалось вывести</b>\n\n"
+                f"🎁 {withdrawal['gift_name']}\n\n"
+                f"Подарок возвращён в ваш инвентарь.",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        
+        await callback.message.edit_text(
+            f"❌ Отклонено!\n\n"
+            f"{withdrawal['gift_name']} возвращён пользователю"
+        )
+        await callback.answer("Отклонено!")
+        
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        logger.error(f"Reject withdrawal error: {e}")
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
 
 
+# ===== MAIN =====
 async def main():
-    logging.info("Bot starting...")
+    logger.info("🤖 Бот запускается...")
     
     # Запускаем фоновые задачи
     asyncio.create_task(check_pending_payments())
     asyncio.create_task(check_withdrawals())
     
+    # Запускаем бота
     await dp.start_polling(bot)
 
 
