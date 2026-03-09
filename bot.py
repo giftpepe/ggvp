@@ -2,7 +2,12 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, LabeledPrice, PreCheckoutQuery, CallbackQuery
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, 
+    LabeledPrice, PreCheckoutQuery, CallbackQuery,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
+    InlineQueryResultPhoto, ChosenInlineResult
+)
 from supabase import create_client, Client
 
 # ===== НАСТРОЙКИ =====
@@ -14,6 +19,10 @@ CHANNEL_ID = "@giftpepechannel"  # Канал для обязательной п
 
 # Курс: 100 Stars = 1.1 TON
 STARS_TO_TON_RATE = 1.1 / 100
+
+# URL фото приветствия (загрузи GiftPepe.jpg на хостинг и вставь сюда ссылку)
+# Или используй file_id после первой отправки
+WELCOME_PHOTO_URL = "https://giftpepe.github.io/GiftPepe.jpg"  # Замени на реальный URL
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,7 +54,7 @@ async def cmd_start(message: types.Message):
     
     if not is_subscribed:
         # Показываем сообщение с требованием подписки
-        text = """👋 <b>Добро пожаловать в GiftPepe!</b>
+        caption = """👋 <b>Добро пожаловать в GiftPepe!</b>
 
 🎁 Чтобы начать играть, подпишись на наш канал:
 📢 <b>@giftpepechannel</b>
@@ -60,7 +69,17 @@ async def cmd_start(message: types.Message):
             [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
         ])
         
-        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        # Отправляем фото с подписью
+        try:
+            await message.answer_photo(
+                photo=WELCOME_PHOTO_URL,
+                caption=caption,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except:
+            # Если фото не загрузилось — отправляем текст
+            await message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
         return
     
     # Если подписан — показываем приветствие
@@ -131,7 +150,7 @@ async def show_welcome(message_or_callback, user: types.User, args: str = None):
             pass
     
     # Приветственное сообщение
-    text = """🎁 <b>Добро пожаловать в GiftPepe!</b>
+    caption = """🎁 <b>Добро пожаловать в GiftPepe!</b>
 
 🎰 Открывай кейсы и выигрывай NFT-подарки
 ⬆️ Апгрейди подарки для увеличения стоимости
@@ -143,7 +162,84 @@ async def show_welcome(message_or_callback, user: types.User, args: str = None):
         [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
     ])
     
-    await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    # Отправляем фото с подписью
+    try:
+        await message_or_callback.answer_photo(
+            photo=WELCOME_PHOTO_URL,
+            caption=caption,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    except:
+        # Если фото не загрузилось — отправляем текст
+        await message_or_callback.answer(caption, reply_markup=keyboard, parse_mode="HTML")
+
+
+# ===== INLINE MODE =====
+@dp.inline_query()
+async def inline_query_handler(inline_query: InlineQuery):
+    """Обработчик инлайн-запросов @GiftPepeRobot"""
+    user = inline_query.from_user
+    query = inline_query.query.lower().strip()
+    
+    # Проверяем подписку
+    is_subscribed = await check_subscription(user.id)
+    
+    if not is_subscribed:
+        # Если не подписан — показываем сообщение о подписке
+        results = [
+            InlineQueryResultArticle(
+                id="not_subscribed",
+                title="📢 Требуется подписка",
+                description="Подпишись на @giftpepechannel чтобы играть",
+                input_message_content=InputTextMessageContent(
+                    message_text=f"👋 <b>Привет!</b>\n\n"
+                                f"🎁 Чтобы начать играть в GiftPepe, подпишись на канал:\n"
+                                f"📢 @giftpepechannel\n\n"
+                                f"Затем напиши боту /start",
+                    parse_mode="HTML"
+                ),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📢 Подписаться", url="https://t.me/giftpepechannel")],
+                    [InlineKeyboardButton(text="🤖 Открыть бота", url="https://t.me/GiftPepeRobot")]
+                ])
+            )
+        ]
+        await inline_query.answer(results, cache_time=1)
+        return
+    
+    # Если подписан — показываем кнопку игры
+    # Проверяем запрос (Play или пустой)
+    if query in ["", "play", "играть", "start", "начать"]:
+        results = [
+            InlineQueryResultPhoto(
+                id="giftpepe_welcome",
+                title="🎮 Играть в GiftPepe",
+                description="Открывай кейсы и выигрывай NFT-подарки!",
+                photo_url=WELCOME_PHOTO_URL,
+                thumbnail_url=WELCOME_PHOTO_URL,
+                caption="🎁 <b>GiftPepe — открывай кейсы и выигрывай NFT-подарки!</b>\n\n"
+                        "🎰 Кейсы с редкими подарками\n"
+                        "⬆️ Апгрейд предметов\n"
+                        "💎 Вывод на Telegram-аккаунт\n\n"
+                        "Нажми кнопку ниже чтобы начать! 👇",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
+                ])
+            )
+        ]
+        await inline_query.answer(results, cache_time=1)
+    else:
+        # Для других запросов — пустой ответ
+        await inline_query.answer([], cache_time=1)
+
+
+# ===== INLINE RESULT CHOSEN =====
+@dp.chosen_inline_result()
+async def chosen_inline_result_handler(chosen_result: ChosenInlineResult):
+    """Логируем когда пользователь выбрал инлайн-результат"""
+    logger.info(f"Inline result chosen by user {chosen_result.from_user.id}: {chosen_result.result_id}")
 
 
 # ===== ОТПРАВКА ИНВОЙСА =====
