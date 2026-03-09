@@ -10,6 +10,7 @@ BOT_TOKEN = "7948801307:AAEVkGlfE4kd0dmgifPZPdQb4FK3vvXrdUc"
 ADMIN_ID = 8339935446
 SUPABASE_URL = "https://soxzsdwtutwdzygezsnk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNveHpzZHd0dXR3ZHp5Z2V6c25rIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mjg2NzMwNywiZXhwIjoyMDg4NDQzMzA3fQ.VvVJW7abALCE0vPXU1gebKEf1JJhk8-Owk0b-VYK6jQ"
+CHANNEL_ID = "@giftpepechannel"  # Канал для обязательной подписки
 
 # Курс: 100 Stars = 1.1 TON
 STARS_TO_TON_RATE = 1.1 / 100
@@ -22,11 +23,71 @@ dp = Dispatcher()
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+# ===== ПРОВЕРКА ПОДПИСКИ =====
+async def check_subscription(user_id: int) -> bool:
+    """Проверяет, подписан ли пользователь на канал"""
+    try:
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        logger.error(f"Subscription check error: {e}")
+        return False
+
+
 # ===== START =====
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     user = message.from_user
     args = message.text.split()[1] if len(message.text.split()) > 1 else None
+    
+    # Проверяем подписку на канал
+    is_subscribed = await check_subscription(user.id)
+    
+    if not is_subscribed:
+        # Показываем сообщение с требованием подписки
+        text = """👋 <b>Добро пожаловать в GiftPepe!</b>
+
+🎁 Чтобы начать играть, подпишись на наш канал:
+📢 <b>@giftpepechannel</b>
+
+Там ты найдешь:
+• Новости проекта
+• Промокоды и бонусы
+• Розыгрыши подарков"""
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Подписаться на канал", url=f"https://t.me/giftpepechannel")],
+            [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
+        ])
+        
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        return
+    
+    # Если подписан — показываем приветствие
+    await show_welcome(message, user, args)
+
+
+# ===== ПРОВЕРКА ПОДПИСКИ (кнопка) =====
+@dp.callback_query(F.data == "check_sub")
+async def check_sub_callback(callback: CallbackQuery):
+    user = callback.from_user
+    
+    # Проверяем подписку
+    is_subscribed = await check_subscription(user.id)
+    
+    if is_subscribed:
+        # Подписан — показываем приветствие
+        await callback.message.delete()
+        await show_welcome(callback.message, user)
+        await callback.answer("✅ Подписка подтверждена!")
+    else:
+        # Не подписан — показываем ошибку
+        await callback.answer("❌ Ты еще не подписан на канал!", show_alert=True)
+
+
+# ===== ПРИВЕТСТВИЕ =====
+async def show_welcome(message_or_callback, user: types.User, args: str = None):
+    """Показывает приветственное сообщение с кнопкой Играть"""
     
     # Создаём/обновляем пользователя
     try:
@@ -64,7 +125,7 @@ async def cmd_start(message: types.Message):
         try:
             stars = int(args.replace('pay_', ''))
             if stars >= 1:
-                await send_invoice(message.chat.id, user.id, stars)
+                await send_invoice(message_or_callback.chat.id, user.id, stars)
                 return
         except:
             pass
@@ -82,7 +143,7 @@ async def cmd_start(message: types.Message):
         [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
     ])
     
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 # ===== ОТПРАВКА ИНВОЙСА =====
