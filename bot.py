@@ -187,6 +187,10 @@ async def process_withdraw_callback(callback: CallbackQuery):
         # Подтверждаем вывод
         supabase.table("withdrawals").update({"status": "approved"}).eq("id", withdraw_id).execute()
         
+        # Получаем username пользователя
+        user_data = supabase.table("users").select("username").eq("id", user_id).execute()
+        target_username = user_data.data[0].get("username", "") if user_data.data else ""
+        
         # Уведомляем пользователя
         try:
             await bot.send_message(
@@ -194,7 +198,7 @@ async def process_withdraw_callback(callback: CallbackQuery):
                 f"✅ <b>Подарок выведен!</b>\n\n"
                 f"🎁 {gift_name}\n"
                 f"💰 Стоимость: <b>{gift_price} TON</b>\n\n"
-                f"Подарок отправлен на ваш кошелёк!",
+                f"Подарок отправлен на ваш аккаунт @{target_username}",
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
