@@ -21,10 +21,10 @@ CHANNEL_ID = "@giftpepechannel"  # Канал для обязательной п
 STARS_TO_TON_RATE = 1.1 / 100
 
 # URL фото приветствия - теперь используется с Vercel
-WELCOME_PHOTO_URL = "https://giftpepe.vercel.app/GiftPepe.jpg"
+WELCOME_PHOTO_URL = "https://xenms.netlify.app/GiftPepe.jpg"
 
 # URL WebApp - Vercel
-WEBAPP_URL = "https://giftpepe.vercel.app/"
+WEBAPP_URL = "https://xenms.netlify.app/"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
