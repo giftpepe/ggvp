@@ -20,9 +20,11 @@ CHANNEL_ID = "@giftpepechannel"  # Канал для обязательной п
 # Курс: 100 Stars = 1.1 TON
 STARS_TO_TON_RATE = 1.1 / 100
 
-# URL фото приветствия (загрузи GiftPepe.jpg на хостинг и вставь сюда ссылку)
-# Или используй file_id после первой отправки
-WELCOME_PHOTO_URL = "https://giftpepe.github.io/GiftPepe.jpg"  # Замени на реальный URL
+# URL фото приветствия - теперь используется с Vercel
+WELCOME_PHOTO_URL = "https://giftpepe.vercel.app/GiftPepe.jpg"
+
+# URL WebApp - Vercel
+WEBAPP_URL = "https://giftpepe.vercel.app/"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
@@ -159,7 +161,7 @@ async def show_welcome(message_or_callback, user: types.User, args: str = None):
 Нажми кнопку ниже чтобы начать играть! 👇"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
+        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))]
     ])
     
     # Отправляем фото с подписью
@@ -225,7 +227,7 @@ async def inline_query_handler(inline_query: InlineQuery):
                         "Нажми кнопку ниже чтобы начать! 👇",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url="https://giftpepe.github.io/"))]
+                    [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))]
                 ])
             )
         ]
