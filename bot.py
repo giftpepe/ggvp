@@ -25,6 +25,8 @@ WELCOME_PHOTO_URL = "https://gift-pepe.web.app/GiftPepe.jpg"
 
 # URL WebApp - Vercel
 WEBAPP_URL = "https://gift-pepe.web.app/"
+CHANNEL_URL = "https://t.me/giftpepechannel"
+SUPPORT_URL = "https://t.me/GiftPepeSupport"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
@@ -67,7 +69,8 @@ async def cmd_start(message: types.Message):
 • Розыгрыши подарков"""
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Подписаться на канал", url=f"https://t.me/giftpepechannel")],
+            [InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_URL)],
+            [InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_URL)],
             [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
         ])
         
@@ -161,7 +164,11 @@ async def show_welcome(message_or_callback, user: types.User, args: str = None):
 Нажми кнопку ниже чтобы начать играть! 👇"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))]
+        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [
+            InlineKeyboardButton(text="📢 Канал", url=CHANNEL_URL),
+            InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_URL)
+        ]
     ])
     
     # Отправляем фото с подписью
@@ -202,7 +209,7 @@ async def inline_query_handler(inline_query: InlineQuery):
                     parse_mode="HTML"
                 ),
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="📢 Подписаться", url="https://t.me/giftpepechannel")],
+                    [InlineKeyboardButton(text="📢 Канал", url=CHANNEL_URL), InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_URL)],
                     [InlineKeyboardButton(text="🤖 Открыть бота", url="https://t.me/GiftPepeRobot")]
                 ])
             )
@@ -227,7 +234,11 @@ async def inline_query_handler(inline_query: InlineQuery):
                         "Нажми кнопку ниже чтобы начать! 👇",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))]
+                    [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))],
+                    [
+                        InlineKeyboardButton(text="📢 Канал", url=CHANNEL_URL),
+                        InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_URL)
+                    ]
                 ])
             )
         ]
